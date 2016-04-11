@@ -4,6 +4,7 @@ import pandas as pd
 from sklearn.neighbors import KNeighborsClassifier as KNC
 from sklearn.preprocessing import StandardScaler
 from sklearn.cross_validation import cross_val_score
+import operator
 
 __author__ = 'Artem Zhirokhov'
 
@@ -34,12 +35,12 @@ def get_data(filename):
     data = pd.DataFrame(array[1:], columns=array[0])
     return data
 
-def neighbors(X, y, results, method_name, min_neigh_num, max_neigh_num):
+def neighbors(X, y, results, method_name, min_neigh_num, max_neigh_num, step):
     max_acc = 0
     best_neigh = 0
     epsilon = 0.005
 
-    for neighbors_num in range(min_neigh_num, max_neigh_num):
+    for neighbors_num in range(min_neigh_num, max_neigh_num, step):
         knn = KNC(metric='manhattan', n_neighbors=neighbors_num)
 
         X_scaled = StandardScaler().fit_transform(X)
@@ -52,7 +53,19 @@ def neighbors(X, y, results, method_name, min_neigh_num, max_neigh_num):
 
     results[method_name] = (max_acc, best_neigh)
 
+def getNumAndCatfeatures(X):
+    num_columns = []
+    cat_columns = []
 
+    for column in X.columns:
+        if type(X[column].dropna().iloc[0]) == str:
+            cat_columns.append(column)
+        else:
+            num_columns.append(column)
+
+    return (num_columns, cat_columns)
+
+"""
 data = get_data('mammographic.dat')
 
 columns = list(data.columns.values)
@@ -63,15 +76,40 @@ Y = data[y_column]
 
 results = {}
 
-neighbors(Imputer(strategy='mean').fit_transform(X), Y, results, 'mean', 10, 70)
-neighbors(Imputer(strategy='class_median').fit_transform(X, Y), Y, results, 'class_median', 10, 70)
-neighbors(Imputer(strategy='class_mean').fit_transform(X, Y), Y, results, 'class_mean', 10, 70)
-neighbors(Imputer(strategy='knn').fit_transform(X), Y, results, 'knn', 10, 70)
+#neighbors(Imputer(strategy='mean').fit_transform(X), Y, results, 'mean', 10, 70, 3)
+#neighbors(Imputer(strategy='class_median').fit_transform(X, Y), Y, results, 'class_median', 10, 70, 3)
+#neighbors(Imputer(strategy='class_mean').fit_transform(X, Y), Y, results, 'class_mean', 10, 70, 3)
+#neighbors(Imputer(strategy='knn').fit_transform(X), Y, results, 'knn', 10, 70, 3)
+#neighbors(Imputer(strategy='svm').fit_transform(X), Y, results, 'svm', 10, 70, 3)
+#neighbors(Imputer(strategy='logistic_regr').fit_transform(X), Y, results, 'lr', 10, 70, 3)
 
-import operator
 results_sorted_by_maxAcc = sorted(results.items(), key=operator.itemgetter(1), reverse=True)
 for item in results_sorted_by_maxAcc:
     print(item[1], item[0])
+"""
+
+data = pd.DataFrame().from_csv('train.csv')
+data = data.sample(frac=0.01, random_state=410)
+
+X = data[data.columns.values[1:]]
+num_columns, _ = getNumAndCatfeatures(data)
+X = data[num_columns]
+Y = data[data.columns.values[0]]
+
+results = {}
+
+neighbors(Imputer(strategy='mean').fit_transform(X), Y, results, 'mean', 10, 70, 3)
+neighbors(Imputer(strategy='class_median').fit_transform(X, Y), Y, results, 'class_median', 10, 70, 3)
+neighbors(Imputer(strategy='class_mean').fit_transform(X, Y), Y, results, 'class_mean', 10, 70, 3)
+neighbors(Imputer(strategy='knn').fit_transform(X), Y, results, 'knn', 10, 70, 3)
+neighbors(Imputer(strategy='svm').fit_transform(X), Y, results, 'svm', 10, 70, 3)
+neighbors(Imputer(strategy='logistic_regr').fit_transform(X), Y, results, 'lr', 10, 70, 3)
+
+results_sorted_by_maxAcc = sorted(results.items(), key=operator.itemgetter(1), reverse=True)
+for item in results_sorted_by_maxAcc:
+    print(item[1], item[0])
+
+
 #"""
 
 #imputer = Imputer(strategy='knn', verbose=True)
