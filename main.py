@@ -5,11 +5,12 @@ from sklearn.neighbors import KNeighborsClassifier as KNC
 from sklearn.preprocessing import StandardScaler
 from sklearn.cross_validation import cross_val_score
 import operator
+import xgboost as xgb
 
 __author__ = 'Artem Zhirokhov'
 
 
-#"""
+
 #from .dat to pandas.DataFrame
 def get_data(filename):
     f = open(filename, 'r')
@@ -65,6 +66,7 @@ def getNumAndCatfeatures(X):
 
     return (num_columns, cat_columns)
 
+
 """
 data = get_data('mammographic.dat')
 
@@ -74,27 +76,14 @@ y_column = columns[-1]
 X = data[X_columns]
 Y = data[y_column]
 
-results = {}
-
-#neighbors(Imputer(strategy='mean').fit_transform(X), Y, results, 'mean', 10, 70, 3)
-#neighbors(Imputer(strategy='class_median').fit_transform(X, Y), Y, results, 'class_median', 10, 70, 3)
-#neighbors(Imputer(strategy='class_mean').fit_transform(X, Y), Y, results, 'class_mean', 10, 70, 3)
-#neighbors(Imputer(strategy='knn').fit_transform(X), Y, results, 'knn', 10, 70, 3)
-#neighbors(Imputer(strategy='svm').fit_transform(X), Y, results, 'svm', 10, 70, 3)
-#neighbors(Imputer(strategy='logistic_regr').fit_transform(X), Y, results, 'lr', 10, 70, 3)
-
-results_sorted_by_maxAcc = sorted(results.items(), key=operator.itemgetter(1), reverse=True)
-for item in results_sorted_by_maxAcc:
-    print(item[1], item[0])
-"""
-
-data = pd.DataFrame().from_csv('train.csv')
-data = data.sample(frac=0.01, random_state=410)
-
-X = data[data.columns.values[1:]]
-num_columns, _ = getNumAndCatfeatures(data)
-X = data[num_columns]
-Y = data[data.columns.values[0]]
+#imptr = Imputer(strategy='xgboost', verbose=1).fit(X)
+#imptr.transform(X, Y)
+#imptr = Imputer(strategy='svm', verbose=1).fit(X)
+#imptr.transform(X, Y)
+#imptr = Imputer(strategy='knn', verbose=1).fit(X)
+#imptr.transform(X, Y)
+#imptr = Imputer(strategy='logistic_regr', verbose=1).fit(X)
+#imptr.transform(X, Y)
 
 results = {}
 
@@ -103,23 +92,35 @@ neighbors(Imputer(strategy='class_median').fit_transform(X, Y), Y, results, 'cla
 neighbors(Imputer(strategy='class_mean').fit_transform(X, Y), Y, results, 'class_mean', 10, 70, 3)
 neighbors(Imputer(strategy='knn').fit_transform(X), Y, results, 'knn', 10, 70, 3)
 neighbors(Imputer(strategy='svm').fit_transform(X), Y, results, 'svm', 10, 70, 3)
-neighbors(Imputer(strategy='logistic_regr').fit_transform(X), Y, results, 'lr', 10, 70, 3)
+neighbors(Imputer(strategy='xgboost').fit_transform(X), Y, results, 'xgboost', 10, 70, 3)
+#neighbors(Imputer(strategy='logistic_regr').fit_transform(X), Y, results, 'lr', 10, 70, 3)
 
 results_sorted_by_maxAcc = sorted(results.items(), key=operator.itemgetter(1), reverse=True)
 for item in results_sorted_by_maxAcc:
     print(item[1], item[0])
 
+"""
+data = pd.DataFrame().from_csv('train.csv')
+data = data.sample(frac=0.01, random_state=410)
 
-#"""
+X = data[data.columns.values[1:]]
+num_columns, _ = getNumAndCatfeatures(data)
+X = data[num_columns]
+Y = data[data.columns.values[0]]
 
-#imputer = Imputer(strategy='knn', verbose=True)
-#imputer.fit(X)
+#Imputer(strategy='xgboost', verbose=1).fit(X)
 
-#x = Imputer(strategy='class_mean', verbose=True)
-#df = pd.DataFrame({'A': [1, 2, 3, 4, 5, 6, np.nan, 7], 'B': [3, 4, 5, 6, 7, 8, 9, np.nan]})
-#df = pd.DataFrame({'A': ['a', 'a', 'a', 'b', 'b', 'b', np.nan, np.nan], 'B': [3, 4, 5, 6, 7, 8, np.nan, np.nan]})
-#print(df)
-#y1 = pd.Series([0, 0, 0, 1, 1, 1, 0, 1])
-#print(x.fit_transform(df, y1))
-#print(x.fit_transform(df, y))
-#print(Imputer().fit_transform(df, y))
+results = {}
+
+neighbors(Imputer(strategy='xgboost').fit_transform(X), Y, results, 'xgboost', 10, 70, 3)
+neighbors(Imputer(strategy='mean').fit_transform(X), Y, results, 'mean', 10, 70, 3)
+neighbors(Imputer(strategy='class_median').fit_transform(X, Y), Y, results, 'class_median', 10, 70, 3)
+neighbors(Imputer(strategy='class_mean').fit_transform(X, Y), Y, results, 'class_mean', 10, 70, 3)
+#neighbors(Imputer(strategy='knn').fit_transform(X), Y, results, 'knn', 10, 70, 3)
+neighbors(Imputer(strategy='svm').fit_transform(X), Y, results, 'svm', 10, 70, 3)
+#neighbors(Imputer(strategy='logistic_regr').fit_transform(X), Y, results, 'lr', 10, 70, 3)
+
+results_sorted_by_maxAcc = sorted(results.items(), key=operator.itemgetter(1), reverse=True)
+for item in results_sorted_by_maxAcc:
+    print(item[1], item[0])
+

@@ -1,13 +1,14 @@
 import pandas as pd
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier as KNC, KNeighborsRegressor as KNR
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder, MinMaxScaler
 from sklearn.cross_validation import cross_val_score, train_test_split
 from sklearn.metrics import mean_squared_error as MSE
 from math import sqrt
 from copy import copy
 from sklearn import svm
 from sklearn.linear_model import LogisticRegression as lr
+import xgboost as xgb
 
 
 __author__ = 'Artem Zhirokhov'
@@ -27,7 +28,7 @@ class Imputer:
         If strategy=knn, then impute values, according to knn model with the best parameters, that would be
             defined during fitting.
         If strategy=svm, then impute values, according to svm model.
-        If strategy=logistic_regr, then impute values, according to logistic regression model.
+        [not_implemented]If strategy=logistic_regr, then impute values, according to logistic regression model.
         [not implemented]If strategy=knn_auto, then impute values, according to knn model with the best parameters, that would be
             defined during fitting.
         [not implemented]If strategy=knn_custom, then impute values, according to knn model with user's parameters
@@ -51,9 +52,13 @@ class Imputer:
 
         self._is_fitted = False
         self._mask = []
-        self._clr = None
-        self._rgr = None
+        self._classifiers = {}
+        self._regressors = {}
         self._devided_features = None
+        #label encoder for logistic regression in xgboost
+        self._label_encoders = {}
+        #for regression in xgboost
+        self._label_scalers = {}
 
     """
     Main methods
@@ -75,6 +80,8 @@ class Imputer:
             self._svm_fit(X, y=y)
         elif self.strategy == 'logistic_regr':
             self._lr_fit(X, y=y)
+        elif self.strategy == 'xgboost':
+            self._xgb_fit(X, y=y)
 
         self._is_fitted = True
 
@@ -161,6 +168,38 @@ class Imputer:
 
                 self._use_rgr_to_fill_na(current_X, X_test, column_name, X_new)
 
+        if self.strategy == 'xgboost':
+
+            for column_name in self._devided_features['class']:
+                current_X_columns = copy(list(X.columns.values))
+                current_X_columns.remove(column_name)
+
+                current_X, _, _, X_test = self._get_X_and_y_by_column_name_with_imputs(X,
+                                                                                       current_X_columns,
+                                                                                       column_name)
+
+                if X_test.empty is False:
+                    scaler = StandardScaler().fit(current_X)
+                    y_pred = self._classifiers[column_name].predict(xgb.DMatrix(scaler.transform(X_test)))
+                    y_pred = self._label_encoders[column_name].inverse_transform(y_pred.astype(int))
+
+                    self._set_pred_values_to_df(list(X_test.index.values), X_new, y_pred, column_name)
+
+            for column_name in self._devided_features['regr']:
+                current_X_columns = copy(list(X.columns.values))
+                current_X_columns.remove(column_name)
+
+                current_X, _, _, X_test = self._get_X_and_y_by_column_name_with_imputs(X,
+                                                                                       current_X_columns,
+                                                                                       column_name)
+
+                if X_test.empty is False:
+                    scaler = StandardScaler().fit(current_X)
+                    y_pred = self._regressors[column_name].predict(xgb.DMatrix(scaler.transform(X_test)))
+                    y_pred = self._label_scalers[column_name].inverse_transform(y_pred)
+
+                    self._set_pred_values_to_df(list(X_test.index.values), X_new, y_pred, column_name)
+
         return X_new
 
     """
@@ -191,7 +230,7 @@ class Imputer:
                                                                                           column_name)
 
             scaler = StandardScaler().fit(current_X)
-            self._clr = svm.SVC().fit(scaler.transform(X_train), y_train)
+            self._classifiers[column_name] = svm.SVC().fit(scaler.transform(X_train), y_train)
 
         for column_name in self._devided_features['regr']:
             current_X_columns = list(X.columns)
@@ -202,7 +241,7 @@ class Imputer:
                                                                                           column_name)
 
             scaler = StandardScaler().fit(current_X)
-            self._rgr = svm.SVR().fit(scaler.transform(X_train), y_train)
+            self._regressors[column_name] = svm.SVR().fit(scaler.transform(X_train), y_train)
 
     def _knn_fit(self, X, y=None):
 
@@ -227,11 +266,12 @@ class Imputer:
                     max_acc = mean_acc_score
                     best_neigh_num = neighbors_num
 
-            if self.verbose is True:
+            if self.verbose == 1:
                 print(column_name, max_acc, best_neigh_num)
 
-            self._clr = KNC(metric='manhattan', n_neighbors=best_neigh_num).fit(StandardScaler().fit_transform(X_train),
-                                                                                y_train)
+            self._classifiers[column_name] = KNC(metric='manhattan',
+                                                 n_neighbors=best_neigh_num).fit(StandardScaler().fit_transform(X_train),
+                                                                                 y_train)
 
         for column_name in self._devided_features['regr']:
             current_X_columns = copy(list(X.columns.values))
@@ -272,11 +312,12 @@ class Imputer:
                         best_weights = 'uniform'
                     best_neigh_num = neighbors_num
 
-            if self.verbose is True:
+            if self.verbose == 1:
                 print(column_name, min_mse, best_neigh_num, best_weights)
 
-            self._rgr = KNR(weights=best_weights,
-                            n_neighbors=best_neigh_num).fit(StandardScaler().fit_transform(X_train), y_train)
+            self._regressors[column_name] = KNR(weights=best_weights,
+                                            n_neighbors=best_neigh_num).fit(StandardScaler().fit_transform(X_train),
+                                                                            y_train)
 
     def _lr_fit(self, X, y=None):
 
@@ -299,7 +340,8 @@ class Imputer:
             acc_map = {newton_acc: 'newton-cg', lbfgs_acc: 'lbfgs', liblinear_acc: 'liblinear', sag_acc: 'sag'}
             max_acc = max(newton_acc, lbfgs_acc, liblinear_acc, sag_acc)
 
-            self._clr = lr(solver=acc_map[max_acc]).fit(scaler.transform(X_train), y_train)
+            self._classifiers[column_name] = lr(max_iter=1000,
+                                                solver=acc_map[max_acc]).fit(scaler.transform(X_train), y_train)
 
         for column_name in self._devided_features['regr']:
             current_X_columns = list(X.columns)
@@ -310,11 +352,116 @@ class Imputer:
                                                                                           column_name)
 
             scaler = StandardScaler().fit(current_X)
-            self._rgr = lr(solver='sag').fit(scaler.transform(X_train), y_train)
+            self._regressors[column_name] = lr(max_iter=1000, solver='sag').fit(scaler.transform(X_train), y_train)
+
+    def _xgb_fit(self, X, y=None):
+        for column_name in self._devided_features['class']:
+            current_X_columns = list(X.columns)
+            current_X_columns.remove(column_name)
+
+            current_X, X_train, y_train, _ = self._get_X_and_y_by_column_name_with_imputs(X,
+                                                                                          current_X_columns,
+                                                                                          column_name)
+
+            scaler = StandardScaler().fit(current_X)
+            self._label_encoders[column_name] = LabelEncoder().fit(X[column_name].dropna())
+            dtrain = self._get_dmatrix(scaler.transform(X_train), self._label_encoders[column_name].transform(y_train))
+
+            param = {'silent': 1, 'nthread': 4}
+            metric = ''
+            #how much classes do we classify?
+            num_class = y_train.value_counts().shape[0]
+            if num_class == 2:
+                param['objective'] = 'binary:logistic'
+                metric = 'error'
+            else:
+                metric = 'merror'
+                param['objective'] = 'multi:softmax'
+                param['num_class'] = num_class
+
+            #tune the best parameters
+            best_param = {'1-error': 0}
+            epsilon = 0.001
+            #these magic numbers used below probably should be changed
+            for eta in [0.3 + i*0.1 for i in range(8)]:
+                for max_depth in range(2, 11):
+                    for num_round in range(10, 20):
+
+                        param['bst:max_depth'] = max_depth
+                        param['bst:eta'] = eta
+                        errors_df = xgb.cv(param, dtrain, num_round, nfold=5, metrics={metric})
+
+                        test_mean_error = errors_df.iloc[-1][0]
+                        if test_mean_error > best_param['1-error'] + epsilon:
+                            best_param['1-error'] = test_mean_error
+                            best_param['max_depth'] = max_depth
+                            best_param['eta'] = eta
+                            best_param['num_round'] = num_round
+
+            if self.verbose == 1:
+                print(best_param)
+
+            param['bst:max_depth'] = best_param['max_depth']
+            param['bst:eta'] = best_param['eta']
+            self._classifiers[column_name] = xgb.train(param, dtrain, best_param['num_round'])
+
+        for column_name in self._devided_features['regr']:
+            current_X_columns = list(X.columns)
+            current_X_columns.remove(column_name)
+
+            current_X, X_train, y_train, _ = self._get_X_and_y_by_column_name_with_imputs(X,
+                                                                                          current_X_columns,
+                                                                                          column_name)
+
+            scaler = StandardScaler().fit(current_X)
+            self._label_scalers[column_name] = MinMaxScaler().fit(y_train)
+            dtrain = self._get_dmatrix(scaler.transform(X_train), self._label_scalers[column_name].transform(y_train))
+
+            param = {'silent': 1, 'nthread': 4}
+            param['objective'] = 'reg:logistic'
+
+            #tune the best parameters
+            best_param = {'error': 0}
+            error_initialized = False
+            #these magic numbers used below probably should be changed
+            #for eta in [0.4 + i*0.2 for i in range(4)]:
+            #    for max_depth in range(2, 11, 2):
+            for num_round in range(10, 20):
+
+                param['bst:max_depth'] = 2
+                param['bst:eta'] = 1
+                errors_df = xgb.cv(param, dtrain, num_round, nfold=5, metrics={'rmse'})
+
+                test_mean_error = errors_df.iloc[-1][0]
+                if error_initialized is False:
+                    error_initialized = True
+                    best_param['error'] = test_mean_error
+                    best_param['max_depth'] = max_depth
+                    best_param['eta'] = eta
+                    best_param['num_round'] = num_round
+
+                elif test_mean_error < best_param['error']:
+                    best_param['error'] = test_mean_error
+                    best_param['max_depth'] = max_depth
+                    best_param['eta'] = eta
+                    best_param['num_round'] = num_round
+
+            if self.verbose == 1:
+                print(best_param)
+
+            param['bst:max_depth'] = best_param['max_depth']
+            param['bst:eta'] = best_param['eta']
+            self._regressors[column_name] = xgb.train(param, dtrain, best_param['num_round'])
 
     """
     Supporting methods
     """
+
+    def _get_dmatrix(self, X, y):
+        #xgb_X = X.as_matrix()
+        xgb_y = np.asarray(y)
+
+        return xgb.DMatrix(X, label=xgb_y)
 
     def _get_X_and_y_by_column_name_with_imputs(self, X, current_X_columns, column_name):
         current_X = pd.DataFrame(Imputer(strategy='mean').fit_transform(X[current_X_columns]),
@@ -365,22 +512,14 @@ class Imputer:
     def _use_clr_to_fill_na(self, current_X, X_test, column_name, X_new):
         if X_test.empty is False:
             scaler = StandardScaler().fit(current_X)
-            y_test = self._clr.predict(scaler.transform(X_test))
-            X_test_indices = list(X_test.index.values)
-            counter = 0
-            for index in X_test_indices:
-                X_new.set_value(index, column_name, y_test[counter])
-                counter += 1
+            y_test = self._classifiers[column_name].predict(scaler.transform(X_test))
+            self._set_pred_values_to_df(list(X_test.index.values), X_new, y_test, column_name)
 
     def _use_rgr_to_fill_na(self, current_X, X_test, column_name, X_new):
         if X_test.empty is False:
             scaler = StandardScaler().fit(current_X)
-            y_test = self._rgr.predict(scaler.transform(X_test))
-            X_test_indices = list(X_test.index.values)
-            counter = 0
-            for index in X_test_indices:
-                X_new.set_value(index, column_name, y_test[counter])
-                counter += 1
+            y_test = self._regressors[column_name].predict(scaler.transform(X_test))
+            self._set_pred_values_to_df(list(X_test.index.values), X_new, y_test, column_name)
 
     def _get_dict_of_values_to_set(self, X):
         dict_of_values = {}
@@ -391,6 +530,12 @@ class Imputer:
             index_in_mask += 1
 
         return dict_of_values
+
+    def _set_pred_values_to_df(self, indices, X_new, y_pred, column_name):
+        counter = 0
+        for index in indices:
+            X_new.set_value(index, column_name, y_pred[counter])
+            counter += 1
 
     def _devide_features_to_classifiable_and_regressiable(self, df, max_number_of_values_per_class):
         columns = list(df.columns.values)
