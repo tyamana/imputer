@@ -66,8 +66,8 @@ def getNumAndCatfeatures(X):
 
     return (num_columns, cat_columns)
 
-
 """
+
 data = get_data('mammographic.dat')
 
 columns = list(data.columns.values)
@@ -75,6 +75,9 @@ X_columns = columns[:-1]
 y_column = columns[-1]
 X = data[X_columns]
 Y = data[y_column]
+
+#imptr = Imputer(strategy='kmeans', verbose=1).fit(X, Y)
+#imptr.transform(X, Y)
 
 #imptr = Imputer(strategy='xgboost', verbose=1).fit(X)
 #imptr.transform(X, Y)
@@ -85,19 +88,22 @@ Y = data[y_column]
 #imptr = Imputer(strategy='logistic_regr', verbose=1).fit(X)
 #imptr.transform(X, Y)
 
+
+
 results = {}
 
 neighbors(Imputer(strategy='mean').fit_transform(X), Y, results, 'mean', 10, 70, 3)
 neighbors(Imputer(strategy='class_median').fit_transform(X, Y), Y, results, 'class_median', 10, 70, 3)
 neighbors(Imputer(strategy='class_mean').fit_transform(X, Y), Y, results, 'class_mean', 10, 70, 3)
-neighbors(Imputer(strategy='knn').fit_transform(X), Y, results, 'knn', 10, 70, 3)
-neighbors(Imputer(strategy='svm').fit_transform(X), Y, results, 'svm', 10, 70, 3)
-neighbors(Imputer(strategy='xgboost').fit_transform(X), Y, results, 'xgboost', 10, 70, 3)
+#neighbors(Imputer(strategy='knn').fit_transform(X), Y, results, 'knn', 10, 70, 3)
+#neighbors(Imputer(strategy='svm').fit_transform(X), Y, results, 'svm', 10, 70, 3)
+#neighbors(Imputer(strategy='xgboost').fit_transform(X), Y, results, 'xgboost', 10, 70, 3)
 #neighbors(Imputer(strategy='logistic_regr').fit_transform(X), Y, results, 'lr', 10, 70, 3)
 
 results_sorted_by_maxAcc = sorted(results.items(), key=operator.itemgetter(1), reverse=True)
 for item in results_sorted_by_maxAcc:
     print(item[1], item[0])
+
 
 """
 data = pd.DataFrame().from_csv('train.csv')
@@ -108,19 +114,54 @@ num_columns, _ = getNumAndCatfeatures(data)
 X = data[num_columns]
 Y = data[data.columns.values[0]]
 
-#Imputer(strategy='xgboost', verbose=1).fit(X)
+
 
 results = {}
 
-neighbors(Imputer(strategy='xgboost').fit_transform(X), Y, results, 'xgboost', 10, 70, 3)
+neighbors(Imputer(strategy='kmeans').fit_transform(X, Y, **{'n_clusters': 3,
+                                                            'max_iter': 300,
+                                                            'n_init': 100,
+                                                            'init': 'k-means++',
+                                                            'n_jobs': 2,
+                                                            'random_state': 282}),
+          Y, results, 'kmeans3', 10, 70, 3)
+neighbors(Imputer(strategy='kmeans').fit_transform(X, Y, **{'n_clusters': 2,
+                                                            'max_iter': 300,
+                                                            'n_init': 100,
+                                                            'init': 'k-means++',
+                                                            'n_jobs': 2,
+                                                            'random_state': 282}),
+          Y, results, 'kmeans2', 10, 70, 3)
+neighbors(Imputer(strategy='kmeans').fit_transform(X, Y, **{'n_clusters': 4,
+                                                            'max_iter': 300,
+                                                            'n_init': 100,
+                                                            'init': 'k-means++',
+                                                            'n_jobs': 2,
+                                                            'random_state': 282}),
+          Y, results, 'kmeans4', 10, 70, 3)
+neighbors(Imputer(strategy='kmeans').fit_transform(X, Y, **{'n_clusters': 5,
+                                                            'max_iter': 300,
+                                                            'n_init': 100,
+                                                            'init': 'k-means++',
+                                                            'n_jobs': 2,
+                                                            'random_state': 282}),
+          Y, results, 'kmeans5', 10, 70, 3)
+neighbors(Imputer(strategy='kmeans').fit_transform(X, Y, **{'n_clusters': 6,
+                                                                'max_iter': 300,
+                                                                'n_init': 100,
+                                                                'init': 'k-means++',
+                                                                'n_jobs': 2,
+                                                                'random_state': 282}),
+          Y, results, 'kmeans6', 10, 70, 3)
+
+#neighbors(Imputer(strategy='xgboost').fit_transform(X), Y, results, 'xgboost', 10, 70, 3)
 neighbors(Imputer(strategy='mean').fit_transform(X), Y, results, 'mean', 10, 70, 3)
 neighbors(Imputer(strategy='class_median').fit_transform(X, Y), Y, results, 'class_median', 10, 70, 3)
 neighbors(Imputer(strategy='class_mean').fit_transform(X, Y), Y, results, 'class_mean', 10, 70, 3)
 #neighbors(Imputer(strategy='knn').fit_transform(X), Y, results, 'knn', 10, 70, 3)
-neighbors(Imputer(strategy='svm').fit_transform(X), Y, results, 'svm', 10, 70, 3)
+#neighbors(Imputer(strategy='svm').fit_transform(X), Y, results, 'svm', 10, 70, 3)
 #neighbors(Imputer(strategy='logistic_regr').fit_transform(X), Y, results, 'lr', 10, 70, 3)
 
 results_sorted_by_maxAcc = sorted(results.items(), key=operator.itemgetter(1), reverse=True)
 for item in results_sorted_by_maxAcc:
     print(item[1], item[0])
-

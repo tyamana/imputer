@@ -9,6 +9,7 @@ from copy import copy
 from sklearn import svm
 from sklearn.linear_model import LogisticRegression as lr
 import xgboost as xgb
+from sklearn.cluster import KMeans
 
 
 __author__ = 'Artem Zhirokhov'
@@ -28,6 +29,9 @@ class Imputer:
         If strategy=knn, then impute values, according to knn model with the best parameters, that would be
             defined during fitting.
         If strategy=svm, then impute values, according to svm model.
+        If strategy=xgboost, then imputer uses xgboost model to imput, best parameters are tuned during fitting.
+        If strategy=kmeans, then imputer uses K-means strategy to imput. Use **kwargs parameter of 'fit' method
+            to set the paramters (same as sklearn.cluster.KMeans estimator).
         [not_implemented]If strategy=logistic_regr, then impute values, according to logistic regression model.
         [not implemented]If strategy=knn_auto, then impute values, according to knn model with the best parameters, that would be
             defined during fitting.
@@ -64,7 +68,7 @@ class Imputer:
     Main methods
     """
 
-    def fit(self, X, y=None):
+    def fit(self, X, y=None, **kwargs):
         if self.strategy == 'mean':
             self._mean_fit(X, y=y)
         elif self.strategy == 'class_mean':
@@ -78,17 +82,20 @@ class Imputer:
             self._knn_fit(X, y=y)
         elif self.strategy == 'svm':
             self._svm_fit(X, y=y)
-        elif self.strategy == 'logistic_regr':
-            self._lr_fit(X, y=y)
+        #elif self.strategy == 'logistic_regr':
+            #self._lr_fit(X, y=y)
         elif self.strategy == 'xgboost':
             self._xgb_fit(X, y=y)
+        elif self.strategy == 'kmeans':
+            self._kmeans_fit(X, y=y, **kwargs)
+
 
         self._is_fitted = True
 
         return self
 
-    def fit_transform(self, X, y=None):
-        self.fit(X, y=y)
+    def fit_transform(self, X, y=None, **kwargs):
+        self.fit(X, y=y, **kwargs)
         return self.transform(X, y)
 
     def get_params(self, deep=True):
@@ -143,6 +150,32 @@ class Imputer:
                     class_value = y.loc[i]
                     if class_value in self._mean_values_mask.keys():
                         X_new.set_value(i, column_name, self._mean_values_mask[class_value][column_name])
+
+        if self.strategy == 'kmeans':
+
+            if y is not None:
+                X_new[y.name] = y
+
+            estr = self._classifiers
+            clusters_pred = estr.predict(Imputer().fit_transform(X_new))
+            cluster_centers = estr.cluster_centers_
+
+            absolute_index = 0
+            for index in X_new.index:
+
+                row = X_new.loc[index].isnull()
+
+                if row.any():
+                    for column_index in range(row.size):
+                        if row.iloc[column_index] == True:
+
+                            X_new.set_value(index,
+                                            X_new.columns[column_index],
+                                            cluster_centers[clusters_pred[absolute_index], column_index])
+
+                absolute_index += 1
+
+            X_new = X_new[X.columns]
 
         self._devided_features = self._devide_features_to_classifiable_and_regressiable(X, 5)
 
@@ -452,6 +485,15 @@ class Imputer:
             param['bst:max_depth'] = best_param['max_depth']
             param['bst:eta'] = best_param['eta']
             self._regressors[column_name] = xgb.train(param, dtrain, best_param['num_round'])
+
+    def _kmeans_fit(self, X, y=None, **kwargs):
+
+        data = X.copy()
+        if y is not None:
+            data[y.name] = y
+
+        self._classifiers = KMeans(**kwargs)
+        self._classifiers.fit(Imputer().fit_transform(data))
 
     """
     Supporting methods
