@@ -32,7 +32,8 @@ class Imputer:
         If strategy=xgboost, then imputer uses xgboost model to imput, best parameters are tuned during fitting.
         If strategy=kmeans, then imputer uses K-means strategy to imput. Use **kwargs parameter of 'fit' method
             to set the paramters (same as sklearn.cluster.KMeans estimator).
-        [not_implemented]If strategy=logistic_regr, then impute values, according to logistic regression model.
+        [not implemented]If strategy=class_knn then knn method will be used per each class (target array is required)
+        [not implemented]If strategy=logistic_regr, then impute values, according to logistic regression model.
         [not implemented]If strategy=knn_auto, then impute values, according to knn model with the best parameters, that would be
             defined during fitting.
         [not implemented]If strategy=knn_custom, then impute values, according to knn model with user's parameters
@@ -69,16 +70,16 @@ class Imputer:
     """
 
     def fit(self, X, y=None, **kwargs):
+
+        self._devided_features = self._devide_features_to_classifiable_and_regressiable(X, 5)
+
         if self.strategy == 'mean':
             self._mean_fit(X, y=y)
         elif self.strategy == 'class_mean':
             self._class_mean_fit(X, y=y)
         elif self.strategy == 'class_median':
             self._class_median_fit(X, y=y)
-
-        self._devided_features = self._devide_features_to_classifiable_and_regressiable(X, 5)
-
-        if self.strategy == 'knn':
+        elif self.strategy == 'knn':
             self._knn_fit(X, y=y)
         elif self.strategy == 'svm':
             self._svm_fit(X, y=y)
@@ -88,7 +89,8 @@ class Imputer:
             self._xgb_fit(X, y=y)
         elif self.strategy == 'kmeans':
             self._kmeans_fit(X, y=y, **kwargs)
-
+        elif self.strategy == 'class_knn':
+            self._class_knn_fit(X, y=y)
 
         self._is_fitted = True
 
@@ -129,6 +131,9 @@ class Imputer:
     def transform(self, X, y=None):
         assert self._is_fitted, 'fit the estimator before transform'
 
+        X_new = X.copy()
+        self._devided_features = self._devide_features_to_classifiable_and_regressiable(X, 5)
+
         if self.strategy == 'mean':
             assert X.shape[1] == len(self._mask),\
                 'inappropriate dimension of data - {0} instead of {1}'.format(X.shape[1], len(self._mask))
@@ -137,101 +142,17 @@ class Imputer:
 
             return X.fillna(dict_of_values_to_set)
 
-        X_new = X.copy()
-
-        if self.strategy.startswith('class'):
-            assert y is not None, 'y must be given for class mean strategy'
-
-            nan_values = X.isnull()
-            for column_name in X_new.columns.values:
-
-                indices = list(nan_values[nan_values[column_name] == True].index.values)
-                for i in indices:
-                    class_value = y.loc[i]
-                    if class_value in self._mean_values_mask.keys():
-                        X_new.set_value(i, column_name, self._mean_values_mask[class_value][column_name])
-
-        if self.strategy == 'kmeans':
-
-            if y is not None:
-                X_new[y.name] = y
-
-            estr = self._classifiers
-            clusters_pred = estr.predict(Imputer().fit_transform(X_new))
-            cluster_centers = estr.cluster_centers_
-
-            absolute_index = 0
-            for index in X_new.index:
-
-                row = X_new.loc[index].isnull()
-
-                if row.any():
-                    for column_index in range(row.size):
-                        if row.iloc[column_index] == True:
-
-                            X_new.set_value(index,
-                                            X_new.columns[column_index],
-                                            cluster_centers[clusters_pred[absolute_index], column_index])
-
-                absolute_index += 1
-
+        elif self.strategy.startswith('class'):
+            self._class_transform(X_new, y)
+        elif self.strategy == 'kmeans':
+            self._kmeans_transform(X_new, y)
             X_new = X_new[X.columns]
-
-        self._devided_features = self._devide_features_to_classifiable_and_regressiable(X, 5)
-
-        if self.strategy == 'knn' or self.strategy == 'svm' or self.strategy == 'logistic_regr':
-
-            for column_name in self._devided_features['class']:
-                current_X_columns = copy(list(X.columns.values))
-                current_X_columns.remove(column_name)
-
-                current_X, _, _, X_test = self._get_X_and_y_by_column_name_with_imputs(X,
-                                                                                       current_X_columns,
-                                                                                       column_name)
-
-                self._use_clr_to_fill_na(current_X, X_test, column_name, X_new)
-
-            for column_name in self._devided_features['regr']:
-                current_X_columns = copy(list(X.columns.values))
-                current_X_columns.remove(column_name)
-
-                current_X, _, _, X_test = self._get_X_and_y_by_column_name_with_imputs(X,
-                                                                                       current_X_columns,
-                                                                                       column_name)
-
-                self._use_rgr_to_fill_na(current_X, X_test, column_name, X_new)
-
-        if self.strategy == 'xgboost':
-
-            for column_name in self._devided_features['class']:
-                current_X_columns = copy(list(X.columns.values))
-                current_X_columns.remove(column_name)
-
-                current_X, _, _, X_test = self._get_X_and_y_by_column_name_with_imputs(X,
-                                                                                       current_X_columns,
-                                                                                       column_name)
-
-                if X_test.empty is False:
-                    scaler = StandardScaler().fit(current_X)
-                    y_pred = self._classifiers[column_name].predict(xgb.DMatrix(scaler.transform(X_test)))
-                    y_pred = self._label_encoders[column_name].inverse_transform(y_pred.astype(int))
-
-                    self._set_pred_values_to_df(list(X_test.index.values), X_new, y_pred, column_name)
-
-            for column_name in self._devided_features['regr']:
-                current_X_columns = copy(list(X.columns.values))
-                current_X_columns.remove(column_name)
-
-                current_X, _, _, X_test = self._get_X_and_y_by_column_name_with_imputs(X,
-                                                                                       current_X_columns,
-                                                                                       column_name)
-
-                if X_test.empty is False:
-                    scaler = StandardScaler().fit(current_X)
-                    y_pred = self._regressors[column_name].predict(xgb.DMatrix(scaler.transform(X_test)))
-                    y_pred = self._label_scalers[column_name].inverse_transform(y_pred)
-
-                    self._set_pred_values_to_df(list(X_test.index.values), X_new, y_pred, column_name)
+        elif self.strategy == 'knn' or self.strategy == 'svm' or self.strategy == 'logistic_regr':
+            self._knn_svm_lr_transform(X, X_new, y)
+        elif self.strategy == 'xgboost':
+            self._xgboost_transform(X, X_new, y)
+        elif self.strategy == 'class_knn':
+            self._class_knn_transform(X, X_new, y)
 
         return X_new
 
@@ -494,6 +415,111 @@ class Imputer:
 
         self._classifiers = KMeans(**kwargs)
         self._classifiers.fit(Imputer().fit_transform(data))
+
+    def _class_knn_fit(self, X, y=None):
+        assert y is not None, 'y must be given for class knn strategy'
+
+        classes_dataframes = self._get_dataframes_per_class(X, y)
+
+        classifiers_for_class_value = {}
+        for key in classes_dataframes.keys():
+            self._knn_fit(classes_dataframes[key])
+            classifiers_for_class_value[key] = copy(self._classifiers)
+        self._classifiers = classifiers_for_class_value
+
+    """
+    Transform methods
+    """
+
+    def _class_transform(self, X_new, y=None):
+        assert y is not None, 'y must be given for class mean strategy'
+
+        nan_values = X_new.isnull()
+        for column_name in X_new.columns.values:
+
+            indices = list(nan_values[nan_values[column_name] == True].index.values)
+            for i in indices:
+                class_value = y.loc[i]
+                if class_value in self._mean_values_mask.keys():
+                    X_new.set_value(i, column_name, self._mean_values_mask[class_value][column_name])
+
+    def _kmeans_transform(self, X_new, y=None):
+        if y is not None:
+            X_new[y.name] = y
+
+        estr = self._classifiers
+        clusters_pred = estr.predict(Imputer().fit_transform(X_new))
+        cluster_centers = estr.cluster_centers_
+
+        absolute_index = 0
+        for index in X_new.index:
+
+            row = X_new.loc[index].isnull()
+
+            if row.any():
+                for column_index in range(row.size):
+                    if row.iloc[column_index] == True:
+
+                        X_new.set_value(index,
+                                        X_new.columns[column_index],
+                                        cluster_centers[clusters_pred[absolute_index], column_index])
+
+            absolute_index += 1
+
+    def _knn_svm_lr_transform(self, X, X_new, y=None):
+        for column_name in self._devided_features['class']:
+            current_X_columns = copy(list(X.columns.values))
+            current_X_columns.remove(column_name)
+
+            current_X, _, _, X_test = self._get_X_and_y_by_column_name_with_imputs(X,
+                                                                                   current_X_columns,
+                                                                                   column_name)
+
+            self._use_clr_to_fill_na(current_X, X_test, column_name, X_new)
+
+        for column_name in self._devided_features['regr']:
+            current_X_columns = copy(list(X.columns.values))
+            current_X_columns.remove(column_name)
+
+            current_X, _, _, X_test = self._get_X_and_y_by_column_name_with_imputs(X,
+                                                                                   current_X_columns,
+                                                                                   column_name)
+
+            self._use_rgr_to_fill_na(current_X, X_test, column_name, X_new)
+
+    def _xgboost_transform(self, X, X_new, y=None):
+        for column_name in self._devided_features['class']:
+            current_X_columns = copy(list(X.columns.values))
+            current_X_columns.remove(column_name)
+
+            current_X, _, _, X_test = self._get_X_and_y_by_column_name_with_imputs(X,
+                                                                                   current_X_columns,
+                                                                                   column_name)
+
+            if X_test.empty is False:
+                scaler = StandardScaler().fit(current_X)
+                y_pred = self._classifiers[column_name].predict(xgb.DMatrix(scaler.transform(X_test)))
+                y_pred = self._label_encoders[column_name].inverse_transform(y_pred.astype(int))
+
+                self._set_pred_values_to_df(list(X_test.index.values), X_new, y_pred, column_name)
+
+        for column_name in self._devided_features['regr']:
+            current_X_columns = copy(list(X.columns.values))
+            current_X_columns.remove(column_name)
+
+            current_X, _, _, X_test = self._get_X_and_y_by_column_name_with_imputs(X,
+                                                                                   current_X_columns,
+                                                                                   column_name)
+
+            if X_test.empty is False:
+                scaler = StandardScaler().fit(current_X)
+                y_pred = self._regressors[column_name].predict(xgb.DMatrix(scaler.transform(X_test)))
+                y_pred = self._label_scalers[column_name].inverse_transform(y_pred)
+
+                self._set_pred_values_to_df(list(X_test.index.values), X_new, y_pred, column_name)
+
+    def _class_knn_transform(self, X, X_new, y=None):
+        pass
 
     """
     Supporting methods
