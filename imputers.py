@@ -32,7 +32,9 @@ class Imputer:
         If strategy=xgboost, then imputer uses xgboost model to imput, best parameters are tuned during fitting.
         If strategy=kmeans, then imputer uses K-means strategy to imput. Use **kwargs parameter of 'fit' method
             to set the paramters (same as sklearn.cluster.KMeans estimator).
-        [not implemented]If strategy=class_knn then knn method will be used per each class (target array is required)
+        If strategy=class_knn then knn method will be used per each class (target array is required)
+        If strategy=class_svm then svm method will be used per each class (target array is required)
+        If strategy=class_xgboost then xgboost method will be used per each class (target array is required)
         [not implemented]If strategy=logistic_regr, then impute values, according to logistic regression model.
         [not implemented]If strategy=knn_auto, then impute values, according to knn model with the best parameters, that would be
             defined during fitting.
@@ -90,7 +92,14 @@ class Imputer:
         elif self.strategy == 'kmeans':
             self._kmeans_fit(X, y=y, **kwargs)
         elif self.strategy == 'class_knn':
-            self._class_knn_fit(X, y=y)
+            self._class_knn_svm_xgboost_fit(X, y=y)
+        elif self.strategy == 'class_svm':
+            self._class_knn_svm_xgboost_fit(X, y=y)
+        elif self.strategy == 'class_xgboost':
+            self._class_knn_svm_xgboost_fit(X, y=y)
+        elif self.strategy == 'class_kmeans':
+            self._class_kmeans_fit(X, y=y, **kwargs)
+
 
         self._is_fitted = True
 
@@ -142,6 +151,11 @@ class Imputer:
 
             return X.fillna(dict_of_values_to_set)
 
+        elif self.strategy == 'class_knn' or self.strategy == 'class_svm' or self.strategy == 'class_xgboost' or\
+             self.strategy == 'class_kmeans':
+            X_new = self._class_knn_svm_xgboost_kmeans_transform(X, X_new, y)
+        elif self.strategy == 'class_kmeans':
+            self._class_kmeans_transform(X, X_new, y)
         elif self.strategy.startswith('class'):
             self._class_transform(X_new, y)
         elif self.strategy == 'kmeans':
@@ -151,8 +165,6 @@ class Imputer:
             self._knn_svm_lr_transform(X, X_new, y)
         elif self.strategy == 'xgboost':
             self._xgboost_transform(X, X_new, y)
-        elif self.strategy == 'class_knn':
-            self._class_knn_transform(X, X_new, y)
 
         return X_new
 
@@ -390,21 +402,17 @@ class Imputer:
                 if error_initialized is False:
                     error_initialized = True
                     best_param['error'] = test_mean_error
-                    best_param['max_depth'] = max_depth
-                    best_param['eta'] = eta
                     best_param['num_round'] = num_round
 
                 elif test_mean_error < best_param['error']:
                     best_param['error'] = test_mean_error
-                    best_param['max_depth'] = max_depth
-                    best_param['eta'] = eta
                     best_param['num_round'] = num_round
 
             if self.verbose == 1:
                 print(best_param)
 
-            param['bst:max_depth'] = best_param['max_depth']
-            param['bst:eta'] = best_param['eta']
+            param['bst:max_depth'] = 2
+            param['bst:eta'] = 1
             self._regressors[column_name] = xgb.train(param, dtrain, best_param['num_round'])
 
     def _kmeans_fit(self, X, y=None, **kwargs):
@@ -416,17 +424,49 @@ class Imputer:
         self._classifiers = KMeans(**kwargs)
         self._classifiers.fit(Imputer().fit_transform(data))
 
-    def _class_knn_fit(self, X, y=None):
+    def _class_knn_svm_xgboost_fit(self, X, y=None):
         assert y is not None, 'y must be given for class knn strategy'
 
         classes_dataframes = self._get_dataframes_per_class(X, y)
 
         classifiers_for_class_value = {}
-        for key in classes_dataframes.keys():
-            self._knn_fit(classes_dataframes[key])
-            classifiers_for_class_value[key] = copy(self._classifiers)
-        self._classifiers = classifiers_for_class_value
+        regressors_for_class_value = {}
+        if self.strategy == 'class_xgboost': #not sure of implementation
+            encoders_for_class_value = {}
+            scalers_for_class_value = {}
 
+        for key in classes_dataframes.keys():
+
+            if self.strategy == 'class_knn':
+                self._knn_fit(classes_dataframes[key])
+            elif self.strategy == 'class_svm':
+                self._svm_fit(classes_dataframes[key])
+            elif self.strategy == 'class_xgboost':
+                self._xgb_fit(classes_dataframes[key])
+                encoders_for_class_value[key] = copy(self._label_encoders)
+                scalers_for_class_value[key] = copy(self._label_scalers)
+
+            classifiers_for_class_value[key] = copy(self._classifiers)
+            regressors_for_class_value[key] = copy(self._regressors)
+
+        self._classifiers = classifiers_for_class_value
+        self._regressors = regressors_for_class_value
+        if self.strategy == 'class_xgboost':
+            self._label_encoders = encoders_for_class_value
+            self._label_scalers = scalers_for_class_value
+
+    def _class_kmeans_fit(self, X, y=None, **kwargs):
+        assert y is not None, 'y must be given for class knn strategy'
+
+        classes_dataframes = self._get_dataframes_per_class(X, y)
+
+        classifiers_for_class_value = {}
+
+        for key in classes_dataframes.keys():
+            self._kmeans_fit(X, **kwargs)
+            classifiers_for_class_value[key] = copy(self._classifiers)
+
+        self._classifiers = classifiers_for_class_value
     """
     Transform methods
     """
@@ -518,8 +558,36 @@ class Imputer:
 
                 self._set_pred_values_to_df(list(X_test.index.values), X_new, y_pred, column_name)
 
-    def _class_knn_transform(self, X, X_new, y=None):
-        pass
+    def _class_knn_svm_xgboost_kmeans_transform(self, X, X_new, y=None):
+
+        classes_dataframes = self._get_dataframes_per_class(X, y)
+        classifiers_for_class_value = copy(self._classifiers)
+        if self.strategy == 'class_svm' or self.strategy == 'class_knn':
+            regressors_for_class_value = copy(self._regressors)
+        if self.strategy == 'class_xgboost':
+            encoders_for_class_value = copy(self._label_encoders)
+            scalers_for_class_value = copy(self._label_scalers)
+        X_new = pd.DataFrame(columns=X.columns.values)
+
+        for (class_value, value_df) in classes_dataframes.items():
+
+            self._classifiers = classifiers_for_class_value[class_value]
+            if self.strategy == 'class_svm' or self.strategy == 'class_knn':
+                self._regressors = regressors_for_class_value[class_value]
+            if self.strategy == 'class_xgboost':
+                self._label_encoders = encoders_for_class_value[class_value]
+                self._label_scalers = scalers_for_class_value[class_value]
+
+            new_df = value_df.copy()
+            if self.strategy == 'class_xgboost':
+                self._xgboost_transform(value_df, new_df)
+            elif self.strategy == 'class_svm' or self.strategy == 'class_knn':
+                self._knn_svm_lr_transform(value_df, new_df)
+            else:
+                self._kmeans_transform(new_df)
+            X_new = pd.concat([X_new, new_df])
+
+        return X_new
 
     """
     Supporting methods
