@@ -154,8 +154,6 @@ class Imputer:
         elif self.strategy == 'class_knn' or self.strategy == 'class_svm' or self.strategy == 'class_xgboost' or\
              self.strategy == 'class_kmeans':
             X_new = self._class_knn_svm_xgboost_kmeans_transform(X, X_new, y)
-        elif self.strategy == 'class_kmeans':
-            self._class_kmeans_transform(X, X_new, y)
         elif self.strategy.startswith('class'):
             self._class_transform(X_new, y)
         elif self.strategy == 'kmeans':
@@ -223,7 +221,7 @@ class Imputer:
             best_neigh_num = 0
             epsilon = 0.005
 
-            for neighbors_num in range(3, 100, 3):
+            for neighbors_num in range(5, 50, 3):
                 knn = KNC(metric='manhattan', n_neighbors=neighbors_num)
                 X_scaled = StandardScaler().fit_transform(X_train)
                 mean_acc_score = cross_val_score(knn, X_scaled, y_train, cv=5).mean()
@@ -254,7 +252,9 @@ class Imputer:
             best_weights = ''
             epsilon = 0.005
 
-            for neighbors_num in range(3, min(100, int(len(current_X.index.values)*0.67)), 3):
+            # FIXME problems with number of neighbors
+            #for neighbors_num in range(3, min(100, int(len(current_X.index.values)*0.67)), 3):
+            for neighbors_num in range(5, min(50, int(len(X_train.index.values)*0.67)), 3):
                 knn_uniform = KNR(n_neighbors=neighbors_num)
                 knn_distance = KNR(weights='distance', n_neighbors=neighbors_num)
 
@@ -270,7 +270,7 @@ class Imputer:
                 y_pred = knn_distance.predict(X_te_scaled)
                 mse_di = sqrt(MSE(y_te, y_pred))
 
-                if min(mse_di, mse_un) < min_mse - epsilon or neighbors_num == 3:
+                if min(mse_di, mse_un) < min_mse - epsilon or neighbors_num == 5:
                     min_mse = min(mse_di, mse_un)
                     if mse_di < mse_un:
                         best_weights = 'distance'
@@ -282,8 +282,8 @@ class Imputer:
                 print(column_name, min_mse, best_neigh_num, best_weights)
 
             self._regressors[column_name] = KNR(weights=best_weights,
-                                            n_neighbors=best_neigh_num).fit(StandardScaler().fit_transform(X_train),
-                                                                            y_train)
+                                                n_neighbors=best_neigh_num).fit(StandardScaler().fit_transform(X_train),
+                                                                                y_train)
 
     def _lr_fit(self, X, y=None):
 
@@ -348,21 +348,36 @@ class Imputer:
             #tune the best parameters
             best_param = {'1-error': 0}
             epsilon = 0.001
+
+            converged = False
             #these magic numbers used below probably should be changed
-            for eta in [0.3 + i*0.1 for i in range(8)]:
-                for max_depth in range(2, 11):
-                    for num_round in range(10, 20):
+            for eta in [0.4, 0.7, 1.0]:
+
+                if converged is True:
+                    break
+
+                for max_depth in range(2, 9, 3):
+
+                    if converged is True:
+                        break
+
+                    for num_round in range(10, 20, 3):
 
                         param['bst:max_depth'] = max_depth
                         param['bst:eta'] = eta
                         errors_df = xgb.cv(param, dtrain, num_round, nfold=5, metrics={metric})
 
                         test_mean_error = errors_df.iloc[-1][0]
-                        if test_mean_error > best_param['1-error'] + epsilon:
+
+                        if test_mean_error > best_param['1-error'] + epsilon or test_mean_error < epsilon:
                             best_param['1-error'] = test_mean_error
                             best_param['max_depth'] = max_depth
                             best_param['eta'] = eta
                             best_param['num_round'] = num_round
+
+                            if test_mean_error == 0.0:
+                                converged = True
+                                break
 
             if self.verbose == 1:
                 print(best_param)
@@ -467,6 +482,7 @@ class Imputer:
             classifiers_for_class_value[key] = copy(self._classifiers)
 
         self._classifiers = classifiers_for_class_value
+
     """
     Transform methods
     """
@@ -500,9 +516,13 @@ class Imputer:
                 for column_index in range(row.size):
                     if row.iloc[column_index] == True:
 
+                        # FIXME MAGIC! set_value doesn't work on dataset and works on another one
+                        #value_to_set = cluster_centers[clusters_pred[absolute_index], column_index]
+                        #print(value_to_set)
                         X_new.set_value(index,
                                         X_new.columns[column_index],
                                         cluster_centers[clusters_pred[absolute_index], column_index])
+                        #print(X_new.iloc[index][X_new.columns.values[column_index]])
 
             absolute_index += 1
 
@@ -529,6 +549,7 @@ class Imputer:
 
     def _xgboost_transform(self, X, X_new, y=None):
         for column_name in self._devided_features['class']:
+
             current_X_columns = copy(list(X.columns.values))
             current_X_columns.remove(column_name)
 
@@ -544,6 +565,7 @@ class Imputer:
                 self._set_pred_values_to_df(list(X_test.index.values), X_new, y_pred, column_name)
 
         for column_name in self._devided_features['regr']:
+
             current_X_columns = copy(list(X.columns.values))
             current_X_columns.remove(column_name)
 
@@ -562,7 +584,7 @@ class Imputer:
 
         classes_dataframes = self._get_dataframes_per_class(X, y)
         classifiers_for_class_value = copy(self._classifiers)
-        if self.strategy == 'class_svm' or self.strategy == 'class_knn':
+        if self.strategy == 'class_svm' or self.strategy == 'class_knn' or self.strategy == 'class_xgboost':
             regressors_for_class_value = copy(self._regressors)
         if self.strategy == 'class_xgboost':
             encoders_for_class_value = copy(self._label_encoders)
@@ -572,7 +594,7 @@ class Imputer:
         for (class_value, value_df) in classes_dataframes.items():
 
             self._classifiers = classifiers_for_class_value[class_value]
-            if self.strategy == 'class_svm' or self.strategy == 'class_knn':
+            if self.strategy == 'class_svm' or self.strategy == 'class_knn' or self.strategy == 'class_xgboost':
                 self._regressors = regressors_for_class_value[class_value]
             if self.strategy == 'class_xgboost':
                 self._label_encoders = encoders_for_class_value[class_value]
