@@ -25,7 +25,7 @@ class Imputer:
     :param strategy: The imputation strategy.
         If strategy=mean, then impute mean value of feature.
         If strategy=class_mean, then impute mean value along class.
-        If strategy=class_mean, then impute median value along class.
+        If strategy=class_median, then impute median value along class.
         If strategy=knn, then impute values, according to knn model with the best parameters, that would be
             defined during fitting.
         If strategy=svm, then impute values, according to svm model.
@@ -194,6 +194,8 @@ class Imputer:
                                                                                           column_name)
 
             scaler = StandardScaler().fit(current_X)
+            y_train = self._prevent_float_labeling(y_train, column_name)
+
             self._classifiers[column_name] = svm.SVC().fit(scaler.transform(X_train), y_train)
 
         for column_name in self._devided_features['regr']:
@@ -224,6 +226,10 @@ class Imputer:
             for neighbors_num in range(5, 50, 3):
                 knn = KNC(metric='manhattan', n_neighbors=neighbors_num)
                 X_scaled = StandardScaler().fit_transform(X_train)
+
+                #to prevent the case when class values are not integers
+                y_train = self._prevent_float_labeling(y_train, column_name)
+
                 mean_acc_score = cross_val_score(knn, X_scaled, y_train, cv=5).mean()
 
                 if mean_acc_score > max_acc + epsilon:
@@ -671,6 +677,8 @@ class Imputer:
         if X_test.empty is False:
             scaler = StandardScaler().fit(current_X)
             y_test = self._classifiers[column_name].predict(scaler.transform(X_test))
+            if column_name in self._label_encoders.keys():
+                y_test = self._label_encoders[column_name].inverse_transform(y_test)
             self._set_pred_values_to_df(list(X_test.index.values), X_new, y_test, column_name)
 
     def _use_rgr_to_fill_na(self, current_X, X_test, column_name, X_new):
@@ -704,3 +712,15 @@ class Imputer:
             else:
                 devided_features['regr'].append(column)
         return devided_features
+
+    def _prevent_float_labeling(self, y, column_name):
+        try:
+            if type(y.value_counts().index.values[0]) is np.float64:
+                print(column_name, 'fit')
+                self._label_encoders[column_name] = LabelEncoder().fit(y)
+                y = self._label_encoders[column_name].transform(y)
+        except AttributeError:
+            #y could be not pd.Series, so...
+            pass
+
+        return y
